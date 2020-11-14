@@ -13,10 +13,13 @@
 #include <time.h>
 #include <vector>
 #include <list>
+#include <set>
 #include <iostream>
 #include <fstream>
 #include <unordered_map> 
 #include <math.h>    // for sqrt
+#include <algorithm>    // std::min
+
 
 using namespace boost;
 using namespace std;
@@ -124,16 +127,14 @@ int register_vertex( const Vertex&                   v,
     return idx;
 }
 
-bool read_file( const string&   strFileName,
-                vector<Vertex>& vecVertices,
-                vector<Edge>&   vecEdges,
-                vector<Cost>&   vecWeights )
+bool read_slice(ifstream&                       data, 
+                double                          zSlice,
+                vector<Vertex>&                 vecVertices,
+                vector<Edge>&                   vecEdges,
+                vector<Cost>&                   vecWeights,
+                map<Vertex, int, VertexLessFn>& mapLookup,
+                set<int>&                       setCurrSliceIdx)
 {
-    map<Vertex, int, VertexLessFn> mapLookup;
-    ifstream data(strFileName);
-    if (!data.is_open())
-        return false;
-
     bool bFound = false;
     for( string strLine; getline(data, strLine); )
         if (strLine == "voronoi")
@@ -151,24 +152,72 @@ bool read_file( const string&   strFileName,
         double px, py, qx, qy;
         int idMSumObj1, idxArc1, idMSumObj2, idxArc2;
         data >> px >> py >> qx >> qy >> idMSumObj1 >> idxArc1 >> idMSumObj2 >> idxArc2;
-        Vertex vrtxP(px, py);
-        Vertex vrtxQ(qx, qy);
+        Vertex vrtxP(px, py, zSlice);
+        Vertex vrtxQ(qx, qy, zSlice);
         int idxP = register_vertex(vrtxP, vecVertices, mapLookup);
         int idxQ = register_vertex(vrtxQ, vecVertices, mapLookup);
+        setCurrSliceIdx.insert(idxP);
+        setCurrSliceIdx.insert(idxQ);
         vecEdges.push_back({ idxP, idxQ });
         vecWeights.push_back(vrtxP.dist(vrtxQ));
     }
     return true;
 }
 //-----------------------------------------------------------------------------
+ void connect_slices(const vector<Vertex>&  vecVertices, 
+                     const set<int>&        setPrevSliceIdx, 
+                     const set<int>&        setCurrSliceIdx, 
+                     vector<Edge>&          vecEdges,
+                     vector<Cost>&          vecWeights)
+{
+    for (auto prevSliceIter : setPrevSliceIdx)
+    {
+        Vertex v1 = vecVertices[prevSliceIter];
+        double minDist = 1000.0;
+        int minCurrSliceIdx = -1;
+        //int nStartIdx = std::max(0, i - 10);
+        //int nEndIdx = std::min(i + 10, (int) setCurrSliceIdx.size());
+        for (auto currSliceIter : setCurrSliceIdx)
+        {
+            Vertex v2 = vecVertices[currSliceIter];
+            double currDist = v1.dist(v2);
+            if (minDist > currDist) 
+            {
+                minDist = currDist;
+                minCurrSliceIdx = currSliceIter;
+            }
+        }
+        vecEdges.push_back({ prevSliceIter, minCurrSliceIdx });
+        vecWeights.push_back(minDist);
+    }
+}
+//-----------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-    vector<Vertex> vecVertices;
-    vector<Edge> vecEdges;
-    vector<Cost> vecWeights;
-    if (!read_file(EXCHANGE_FILE_FULL_NAME, vecVertices, vecEdges, vecWeights))
-        return -1;
+    vector<Vertex> vecVertices; //actual 3D vertices
+    vector<Edge> vecEdges; // edge is a pair of indexes in vecVertices 
+    vector<Cost> vecWeights; // weight of an edge is its length
+    map<Vertex, int, VertexLessFn> mapLookup; //Mapping 3D vertex to it's index in vecVertices
 
+    ifstream data(EXCHANGE_FILE_FULL_NAME);
+    if (!data.is_open())
+        return false;
+
+    double zStep = 1.;
+    double currZ = 0.;
+    set<int> setPrevSliceIdx;
+    set<int> setCurrSliceIdx;
+    while (true)
+    {
+        if (!read_slice(data, currZ,
+            vecVertices, vecEdges, vecWeights,
+            mapLookup, setCurrSliceIdx))
+            break;
+        currZ += zStep;
+        if (setPrevSliceIdx.size() != 0)
+            connect_slices(vecVertices, setPrevSliceIdx, setCurrSliceIdx, vecEdges, vecWeights);
+        setCurrSliceIdx.swap(setPrevSliceIdx);
+    }
     // create graph
     Graph theGraph(vecVertices.size());
     WeightMap weightmap = get(edge_weight, theGraph);
