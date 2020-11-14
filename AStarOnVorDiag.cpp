@@ -209,6 +209,7 @@ int main(int argc, char** argv)
     set<int> setCurrSliceIdx;
     while (true)
     {
+        setCurrSliceIdx.clear();
         if (!read_slice(data, currZ,
             vecVertices, vecEdges, vecWeights,
             mapLookup, setCurrSliceIdx))
